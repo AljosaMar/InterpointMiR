@@ -13,7 +13,6 @@
 #   GEO_Download/download_report.csv
 #   GEO_Download/GEO_download.log
 #
-# Run this script from the repository root.
 ################################################################################
 
 options(stringsAsFactors = FALSE)
@@ -83,6 +82,7 @@ gse_list <- c(
 # Sample counts reported in the article.  The two class counts are compared
 # without assuming an order here; the phenotype rules below determine which
 # class is "normal" and which is "tumor".
+
 expected_class_sizes <- list(
   GSE10694  = c(78L, 78L),
   GSE25508  = c(26L, 34L),
@@ -118,7 +118,35 @@ log_message <- function(gse_id, message) {
 # Sample labels
 # ==============================================================================
 
+article_sample_ids <- function(gse_id) {
+  if (identical(gse_id, "GSE10694")) {
+    return(list(
+      tumor = paste0("GSM", 270322:270399),
+      normal = paste0("GSM", 270400:270477)
+    ))
+  }
+  if (identical(gse_id, "GSE41655")) {
+    return(list(
+      tumor = paste0("GSM", 1021088:1021120),
+      normal = paste0("GSM", 1021014:1021028)
+    ))
+  }
+  NULL
+}
+
 get_sample_labels <- function(pheno_df, gse_id) {
+  article_ids <- article_sample_ids(gse_id)
+  if (!is.null(article_ids)) {
+    ids <- rownames(pheno_df)
+    if (is.null(ids) || anyDuplicated(ids) ||
+        !all(c(article_ids$tumor, article_ids$normal) %in% ids)) {
+      stop("GEO sample IDs do not match the article dataset: ", gse_id)
+    }
+    labels <- rep(NA_character_, nrow(pheno_df))
+    labels[ids %in% article_ids$tumor] <- "tumor"
+    labels[ids %in% article_ids$normal] <- "normal"
+    return(labels)
+  }
   if (identical(gse_id, "GSE53870")) {
     if (!("title" %in% colnames(pheno_df))) {
       stop("GSE53870 phenotype data has no 'title' column.")
@@ -288,6 +316,11 @@ build_mirna_matrix <- function(eset, gse_id) {
   expr <- preprocess_expression_data(expr)
   pheno$label <- get_sample_labels(pheno, gse_id)
 
+  if (!is.null(article_sample_ids(gse_id))) {
+    pheno <- pheno[!is.na(pheno$label), , drop = FALSE]
+    expr <- expr[, rownames(pheno), drop = FALSE]
+  }
+
   label_counts <- table(pheno$label)
 
   if (
@@ -445,6 +478,17 @@ validate_matrix <- function(mat, gse_id) {
     mat$label,
     levels = c("normal", "tumor")
   )
+
+  article_ids <- article_sample_ids(gse_id)
+  if (!is.null(article_ids)) {
+    sample_ids <- rownames(mat)
+    if (anyDuplicated(sample_ids) ||
+        !setequal(sample_ids, c(article_ids$tumor, article_ids$normal)) ||
+        !setequal(sample_ids[labels == "tumor"], article_ids$tumor) ||
+        !setequal(sample_ids[labels == "normal"], article_ids$normal)) {
+      stop("Sample IDs or labels do not match the article dataset: ", gse_id)
+    }
+  }
 
   n_normal <- sum(
     labels == "normal",
